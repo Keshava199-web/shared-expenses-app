@@ -2,12 +2,24 @@ import pandas as pd
 
 from imports.models import ImportJob, ImportAnomaly
 
+from datetime import datetime
+
 
 class CSVImporter:
 
     def __init__(self):
         self.import_job = None
         self.seen_expenses = set()
+    
+        self.meera_leave_date = datetime.strptime(
+            "31-03-2026",
+            "%d-%m-%Y"
+        ).date()
+
+        self.sam_join_date = datetime.strptime(
+            "15-04-2026",
+            "%d-%m-%Y"
+        ).date()
 
     def import_file(self, file_path):
         self.import_job = ImportJob.objects.create(
@@ -113,3 +125,37 @@ class CSVImporter:
             issue_type=issue,
             action_taken=action
         )
+
+    def detect_membership_violation(self, row_number, row):
+        try:
+            expense_date = datetime.strptime(
+                str(row.get("date")),
+                "%d-%m-%Y"
+            ).date()
+
+            participants = str(
+                row.get("split_with", "")
+            ).lower()
+
+            if (
+                "meera" in participants and
+                expense_date > self.meera_leave_date
+            ):
+                self.create_anomaly(
+                    row_number=row_number,
+                    issue="Meera included after leaving",
+                    action="Manual review required"
+                )
+
+            if (
+                "sam" in participants and
+                expense_date < self.sam_join_date
+            ):
+                self.create_anomaly(
+                    row_number=row_number,
+                    issue="Sam included before joining",
+                    action="Manual review required"
+                )
+
+        except Exception:
+            pass
