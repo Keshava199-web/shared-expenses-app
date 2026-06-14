@@ -70,11 +70,12 @@ class CSVImporter:
         self.detect_settlement(row_number, row)
         self.detect_membership_violation(row_number, row)
 
-        expense = self.create_expense(row)
+        expense = self.create_expense(row_number, row)
 
         if expense:
             self.create_participants(
                 expense,
+                row_number,
                 row
             )
 
@@ -175,7 +176,11 @@ class CSVImporter:
         except Exception:
             pass
 
-    def create_expense(self, row):
+    def create_expense(self, row_number, row):
+        
+        if pd.isna(row.get("paid_by")):
+            return None
+        
         payer_name = str(
             row.get("paid_by", "")
         ).strip()
@@ -186,7 +191,7 @@ class CSVImporter:
             )
         except User.DoesNotExist:
             self.create_anomaly(
-                row_number=0,
+                row_number=row_number,
                 issue=f"Unknown payer: {payer_name}",
                 action="Expense skipped"
             )
@@ -208,7 +213,7 @@ class CSVImporter:
             )
         except Exception:
             self.create_anomaly(
-                row_number=0,
+                row_number=row_number,
                 issue="Invalid amount format",
                 action="Expense skipped"
             )
@@ -232,7 +237,7 @@ class CSVImporter:
 
         return expense
     
-    def create_participants(self, expense, row):
+    def create_participants(self, expense, row_number, row):
 
         split_type = str(
             row.get("split_type", "")
@@ -252,30 +257,35 @@ class CSVImporter:
         if split_type == "equal":
             self.create_equal_split(
                 expense,
+                row_number,
                 participants
             )
 
         elif split_type == "unequal":
             self.create_unequal_split(
                 expense,
+                row_number,
                 row
             )
 
         elif split_type == "percentage":
             self.create_percentage_split(
                 expense,
+                row_number,
                 row
             )
 
         elif split_type == "share":
             self.create_share_split(
                 expense,
+                row_number,
                 row
             )
 
     def create_equal_split(
         self,
         expense,
+        row_number,
         participants
     ):
         share = (
@@ -297,11 +307,16 @@ class CSVImporter:
                 )
 
             except User.DoesNotExist:   
-                pass
+                self.create_anomaly(
+                    row_number=row_number,
+                    issue=f"Unknown participant: {username}",
+                    action="Participant skipped"
+                )
 
     def create_unequal_split(
         self,
         expense,
+        row_number,
         row
     ):
         details = str(
@@ -338,7 +353,7 @@ class CSVImporter:
 
             except Exception:
                 self.create_anomaly(
-                    row_number=0,
+                    row_number=row_number,
                     issue="Invalid unequal split",
                     action="Manual review required"
                 )
@@ -346,6 +361,7 @@ class CSVImporter:
     def create_percentage_split(
         self,
         expense,
+        row_number,
         row
     ):
         details = str(
@@ -394,14 +410,14 @@ class CSVImporter:
 
             except Exception:
                 self.create_anomaly(
-                    row_number=0,
+                    row_number=row_number,
                     issue="Invalid percentage split",
                     action="Manual review required"
                 )
 
         if total_percentage != Decimal("100"):
             self.create_anomaly(
-                row_number=0,
+                row_number=row_number,
                 issue="Percentage split does not total 100%",
                 action="Manual review required"
             )
@@ -409,6 +425,7 @@ class CSVImporter:
     def create_share_split(
         self,
         expense,
+        row_number,
         row
     ):
         details = str(
@@ -445,7 +462,7 @@ class CSVImporter:
 
             except Exception:
                 self.create_anomaly(
-                    row_number=0,
+                    row_number=row_number,
                     issue="Invalid share split",
                     action="Manual review required"
                 )
@@ -474,4 +491,9 @@ class CSVImporter:
                 )
 
             except User.DoesNotExist:
+                self.create_anomaly(
+                    row_number=row_number,
+                    issue=f"Unknown participant: {username}",
+                    action="Participant skipped"
+                )
                 pass
