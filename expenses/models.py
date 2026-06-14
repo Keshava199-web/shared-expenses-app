@@ -1,5 +1,5 @@
 from django.db import models
-from django.contrib.auth.models import User
+from django.conf import settings
 from groups.models import Group
 
 
@@ -37,7 +37,7 @@ class Expense(models.Model):
     expense_date = models.DateField()
 
     paid_by = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE,
         related_name="paid_expenses"
     )
@@ -63,7 +63,7 @@ class ExpenseParticipant(models.Model):
     )
 
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE
     )
 

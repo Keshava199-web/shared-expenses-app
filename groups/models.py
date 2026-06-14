@@ -1,12 +1,11 @@
 from django.db import models
-from django.contrib.auth.models import User
-
+from django.conf import settings
 
 class Group(models.Model):
     name = models.CharField(max_length=255)
 
     created_by = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE
     )
 
@@ -25,7 +24,7 @@ class Membership(models.Model):
     )
 
     user = models.ForeignKey(
-        User,
+        settings.AUTH_USER_MODEL,
         on_delete=models.CASCADE
     )
 
