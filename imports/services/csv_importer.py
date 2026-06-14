@@ -93,31 +93,45 @@ class CSVImporter:
                 issue="Missing currency",
                 action="Defaulted to INR"
             )
-        
-        def detect_settlement(self, row_number, row):
-            description = str(
-                row.get("description", "")
-            ).lower()
 
-            notes = str(
-                row.get("notes", "")
-            ).lower()
+    def detect_negative_amount(self, row_number, row):
+        amount = row.get("amount")
 
-            keywords = [
-                "paid back",
-                "settlement",
-                "deposit",
-                "reimbursement"
-            ]
-
-            for keyword in keywords:
-                if keyword in description or keyword in notes:
+        if pd.notna(amount):
+            try:
+                if float(amount) < 0:
                     self.create_anomaly(
                         row_number=row_number,
-                        issue="Settlement detected",
-                        action="Should be imported as Settlement"
+                        issue="Negative amount detected",
+                        action="Treated as refund"
                     )
-                    break
+            except Exception:
+                pass
+
+    def detect_settlement(self, row_number, row):
+        description = str(
+            row.get("description", "")
+        ).lower()
+
+        notes = str(
+            row.get("notes", "")
+        ).lower()
+
+        keywords = [
+            "paid back",
+            "settlement",
+            "deposit",
+            "reimbursement"
+        ]
+
+        for keyword in keywords:
+            if keyword in description or keyword in notes:
+                self.create_anomaly(
+                    row_number=row_number,
+                    issue="Settlement detected",
+                    action="Should be imported as Settlement"
+                )
+                break
 
     def create_anomaly(self, row_number, issue, action):
         ImportAnomaly.objects.create(
@@ -171,6 +185,11 @@ class CSVImporter:
                 username__iexact=payer_name
             )
         except User.DoesNotExist:
+            self.create_anomaly(
+                row_number=0,
+                issue=f"Unknown payer: {payer_name}",
+                action="Expense skipped"
+            )
             return None
 
         try:
@@ -181,14 +200,26 @@ class CSVImporter:
         except Exception:
             return None
 
+        try:
+            amount = Decimal(
+                str(row.get("amount", 0))
+                .replace(",", "")
+                .strip()
+            )
+        except Exception:
+            self.create_anomaly(
+                row_number=0,
+                issue="Invalid amount format",
+                action="Expense skipped"
+            )
+            return None
+
         expense = Expense.objects.create(
             group_id=1,
             title=str(
                 row.get("description", "")
             ),
-            amount=Decimal(
-                str(row.get("amount", 0))
-            ),
+            amount=amount,
             currency=str(
                 row.get("currency", "INR")
             ),
@@ -223,9 +254,21 @@ class CSVImporter:
                 expense,
                 participants
             )
-        
+
         elif split_type == "unequal":
             self.create_unequal_split(
+                expense,
+                row
+            )
+
+        elif split_type == "percentage":
+            self.create_percentage_split(
+                expense,
+                row
+            )
+
+        elif split_type == "share":
+            self.create_share_split(
                 expense,
                 row
             )
@@ -253,7 +296,7 @@ class CSVImporter:
                     share_amount=share
                 )
 
-            except User.DoesNotExist:
+            except User.DoesNotExist:   
                 pass
 
     def create_unequal_split(
@@ -299,3 +342,136 @@ class CSVImporter:
                     issue="Invalid unequal split",
                     action="Manual review required"
                 )
+
+    def create_percentage_split(
+        self,
+        expense,
+        row
+    ):
+        details = str(
+            row.get("split_details", "")
+        )
+
+        entries = details.split(";")
+
+        total_percentage = Decimal("0")
+
+        for entry in entries:
+
+            entry = entry.strip()
+
+            if not entry:
+                continue
+
+            try:
+                parts = entry.rsplit(" ", 1)
+
+                username = parts[0].strip()
+
+                percentage = Decimal(
+                    parts[1]
+                    .replace("%", "")
+                    .strip()
+                )
+
+                total_percentage += percentage
+
+                share_amount = (
+                    expense.amount *
+                    percentage / 100
+                )
+
+                user = User.objects.get(
+                    username__iexact=username
+                )
+
+                ExpenseParticipant.objects.create(
+                    expense=expense,
+                    user=user,
+                    share_amount=share_amount,
+                    percentage=percentage
+                )
+
+            except Exception:
+                self.create_anomaly(
+                    row_number=0,
+                    issue="Invalid percentage split",
+                    action="Manual review required"
+                )
+
+        if total_percentage != Decimal("100"):
+            self.create_anomaly(
+                row_number=0,
+                issue="Percentage split does not total 100%",
+                action="Manual review required"
+            )
+
+    def create_share_split(
+        self,
+        expense,
+        row
+    ):
+        details = str(
+            row.get("split_details", "")
+        )
+
+        entries = details.split(";")
+
+        parsed = []
+
+        total_shares = 0
+
+        for entry in entries:
+
+            entry = entry.strip()
+
+            if not entry:
+                continue
+
+            try:
+                parts = entry.rsplit(" ", 1)
+
+                username = parts[0].strip()
+
+                shares = int(
+                    parts[1].strip()
+                )
+
+                parsed.append(
+                    (username, shares)
+                )
+
+                total_shares += shares
+
+            except Exception:
+                self.create_anomaly(
+                    row_number=0,
+                    issue="Invalid share split",
+                    action="Manual review required"
+                )
+
+        if total_shares == 0:
+            return
+
+        for username, shares in parsed:
+
+            try:
+                user = User.objects.get(
+                    username__iexact=username
+                )
+
+                share_amount = (
+                    expense.amount *
+                    Decimal(shares) /
+                    Decimal(total_shares)
+                )
+
+                ExpenseParticipant.objects.create(
+                    expense=expense,
+                    user=user,
+                    share_amount=share_amount,
+                    shares=shares
+                )
+
+            except User.DoesNotExist:
+                pass
